@@ -4,107 +4,41 @@
 
 (defrecord NumberedLine [number data])
 
-(defrecord ModifiedLine [start end state data line-number])
+(defn type-n [data] {:data data :type :normal})
 
-(defn line-stator
-  [numbered-line]
-  (let [line (:data numbered-line)
-        start (.indexOf line "<!--")
-        end (.indexOf line "-->")
-        line-state (cond
-                     (= start end -1) :continue
-                     (= start -1) :end
-                     (= end -1) :start
-                     (< start end) :start-end
-                     (< end start) :end-start )]
-    (ModifiedLine.
-      start
-      (if (= end -1) -1 (+ 3 end))
-      line-state
-      line
-      (:number numbered-line))))
+(defn type-c [data] {:data data :type :comment})
 
-(defn modify-lines
+(defn is-n? [t] (= :normal (:type t)))
+
+(defn is-c? [t] (= :comment (:type t)))
+
+(defn parse
+  [parsed c]
+  (let [curr (last parsed)
+        line (str (:data curr) c)]
+    (concat (butlast parsed)
+            (cond (is-n? curr) (if (.endsWith line "<!--")
+                                 [(type-n (subs line 0 (- (count line) 4))) (type-c "<!--")]
+                                 [(type-n line)])
+                  (is-c? curr) (if (.endsWith line "-->")
+                                 [(type-c line) (type-n "")]
+                                 [(type-c line)])))))
+
+(defn parse-line
+  [prev-status line]
+  (let [initial-data (if (= prev-status :comment) (type-c "") (type-n ""))]
+    (reduce parse [initial-data] line )))
+
+(defn analyse-line
+  [parsed-lines nl]
+  (let [parsed (parse-line (:end-status (last parsed-lines)) (:data nl))]
+  (conj parsed-lines {:data parsed
+                      :line-number (:number nl)
+                      :end-status (if (= (:type (last parsed)) :normal) :normal :comment )})))
+
+(defn add-line-number
   [lseq]
-  (map line-stator (map (fn [a b] (NumberedLine. a b)) (iterate inc 0) lseq)))
-
-
-(defn transit
-  [current new-state]
-  (case current
-    :off ( case new-state
-           :continue :off
-           :end :off
-           :end-start :start
-           new-state )
-    :end ( case new-state
-           :continue :off
-           :end-start :start
-           new-state)
-    :start (case new-state
-             :continue :on
-             :start-end :end
-             new-state )
-    :start-end (case new-state
-                 :continue :off
-                 :end :off
-                 :end-start :start
-                 new-state)
-    :end-start (case new-state
-                 :continue :on
-                 :start :on
-                 :start-end :end
-                 new-state)
-    :on (case new-state
-          :continue :on
-          :start :on
-          :start-end :end
-          new-state)
-    (case new-state
-      :continue :off
-      :end :off
-      :end-start :start
-      new-state)))
-
-;;; start, end, continue, start/end, end/start, off, on
-
-(def initial-result { :comment ""
-                      :comments []
-                      :line-number 0
-                      :state :off })
-
-(defn conj-nl
-  [comments line data]
-  (conj comments (NumberedLine. line data)))
-
-(defn collect-comments
-  [current modified-line]
-  (let [line (:data modified-line)
-        start (:start modified-line)
-        end (:end modified-line)
-        cmt (:comment current)
-        comments (:comments current)
-        current-no (:line-number current)
-        newline-no (:line-number modified-line)
-        new-state (transit (:state current) (:state modified-line))]
-    (assoc (case  new-state
-             :off       current
-             :on        (assoc current
-                          :comment (str cmt line ))
-             :start     (assoc current
-                          :comment (subs line start)
-                          :line-number newline-no)
-             :end       (assoc current
-                          :comment ""
-                          :comments (conj-nl comments current-no (str cmt (subs line 0 end))))
-             :start-end (assoc current
-                          :comments (conj-nl comments newline-no (subs line start end)))
-             :end-start (assoc current
-                          :comment (subs line start)
-                          :comments (conj-nl comments current-no (str cmt (subs line 0 end)))
-                          :line-number newline-no)
-             initial-result )
-      :state new-state)))
+  (map (fn [a b] (NumberedLine. a b)) (iterate inc 1) lseq))
 
 (defrecord Result [file numbered-line])
 
@@ -115,9 +49,17 @@
         (<= 0 (.indexOf string "</imart"))
         (<= 0 (.indexOf string "imart>")))))
 
+(defn flatten-parsed [coll parsed]
+  (->> (:data parsed)
+       (map (fn [data] (assoc data :line-number (:line-number parsed))))
+       (concat coll)))
+
 (defn extract-html-comment
   [lseq]
-  (:comments (reduce collect-comments initial-result (modify-lines lseq))))
+  (->> (add-line-number lseq)
+       (reduce analyse-line [])
+       (reduce flatten-parsed [])
+       (filter is-c?)))
 
 (defn extract-imart-comment
   [lseq]
