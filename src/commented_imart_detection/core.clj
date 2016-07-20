@@ -12,7 +12,7 @@
 
 (defn is-c? [t] (= :comment (:type t)))
 
-(defn parse
+(defn analyse
   [parsed c]
   (let [curr (last parsed)
         line (str (:data curr) c)]
@@ -24,17 +24,25 @@
                                  [(type-c line) (type-n "")]
                                  [(type-c line)])))))
 
-(defn parse-line
+(defn analyze-line
   [prev-status line]
   (let [initial-data (if (= prev-status :comment) (type-c "") (type-n ""))]
-    (reduce parse [initial-data] line )))
+    (reduce analyse [initial-data] line )))
 
-(defn analyse-line
-  [parsed-lines nl]
-  (let [parsed (parse-line (:end-status (last parsed-lines)) (:data nl))]
-  (conj parsed-lines {:data parsed
-                      :line-number (:number nl)
-                      :end-status (if (= (:type (last parsed)) :normal) :normal :comment )})))
+(defn analyzed-item
+  [parsed-data nl]
+  {:data parsed-data
+   :line-number (:number nl)
+   :end-type (if (is-n? (last parsed-data)) :normal :comment)})
+
+(defn analyze-and-collect [analyzed-arr nl]
+  (conj analyzed-arr
+        (analyzed-item  (analyze-line (:end-type (last analyzed-arr)) (:data nl))
+                        nl)))
+
+(defn analyze-html
+  [numbered-lines]
+  (reduce analyze-and-collect [] numbered-lines))
 
 (defn add-line-number
   [lseq]
@@ -49,21 +57,22 @@
         (<= 0 (.indexOf string "</imart"))
         (<= 0 (.indexOf string "imart>")))))
 
-(defn flatten-parsed [coll parsed]
-  (->> (:data parsed)
-       (map (fn [data] (assoc data :line-number (:line-number parsed))))
-       (concat coll)))
-
-(defn extract-html-comment
-  [lseq]
-  (->> (add-line-number lseq)
-       (reduce analyse-line [])
-       (reduce flatten-parsed [])
-       (filter is-c?)))
+(defn flatten-analyzed-items
+  [analyzed-items]
+  (reduce (fn [coll parsed]
+            (->> (:data parsed)
+                 (map (fn [data] (assoc data :line-number (:line-number parsed))))
+                 (concat coll)))
+          []
+          analyzed-items))
 
 (defn extract-imart-comment
   [lseq]
-    (filter contains-imart? (extract-html-comment lseq)))
+  (->> (add-line-number lseq)
+       (analyze-html)
+       (flatten-analyzed-items)
+       (filter is-c?)
+       (filter contains-imart?)))
 
 (defn extract-imart-comment-from-file
   [file]
