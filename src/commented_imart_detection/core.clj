@@ -62,7 +62,7 @@
   (reduce (fn [coll parsed]
             (->> (:data parsed)
                  (map (fn [data] (assoc data :line-number (:line-number parsed))))
-                 (concat coll)))
+                 (into coll)))
           []
           analyzed-items))
 
